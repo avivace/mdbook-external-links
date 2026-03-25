@@ -1,9 +1,9 @@
 use clap::{Arg, ArgMatches, Command};
 use exl_lib::Exl;
-use mdbook::{
+use mdbook_preprocessor::{
     book::{Book, Chapter},
     errors::Result,
-    preprocess::{CmdPreprocessor, Preprocessor, PreprocessorContext},
+    Preprocessor, PreprocessorContext,
 };
 use semver::{Version, VersionReq};
 use std::io;
@@ -32,17 +32,17 @@ fn main() {
 }
 
 fn handle_preprocessing(pre: &dyn Preprocessor) -> Result<()> {
-    let (ctx, book) = CmdPreprocessor::parse_input(io::stdin())?;
+    let (ctx, book) = mdbook_preprocessor::parse_input(io::stdin())?;
 
     let book_version = Version::parse(&ctx.mdbook_version)?;
-    let version_req = VersionReq::parse(mdbook::MDBOOK_VERSION)?;
+    let version_req = VersionReq::parse(mdbook_preprocessor::MDBOOK_VERSION)?;
 
     if !version_req.matches(&book_version) {
         eprintln!(
             "Warning: The {} plugin was built against version {} of mdbook, \
              but we're being called from version {}",
             pre.name(),
-            mdbook::MDBOOK_VERSION,
+            mdbook_preprocessor::MDBOOK_VERSION,
             ctx.mdbook_version
         );
     }
@@ -58,7 +58,7 @@ fn handle_supports(pre: &dyn Preprocessor, sub_args: &ArgMatches) -> ! {
         .get_one::<String>("renderer")
         .expect("Required argument");
 
-    let supported = pre.supports_renderer(renderer);
+    let supported = pre.supports_renderer(renderer).unwrap_or(false);
 
     if supported {
         process::exit(0);
@@ -68,7 +68,8 @@ fn handle_supports(pre: &dyn Preprocessor, sub_args: &ArgMatches) -> ! {
 }
 
 mod exl_lib {
-    use pulldown_cmark::{CowStr, Event, LinkType, Options, Parser, Tag};
+    use mdbook_preprocessor::book::BookItem;
+    use pulldown_cmark::{CowStr, Event, LinkType, Options, Parser, Tag, TagEnd};
     use pulldown_cmark_to_cmark::cmark;
 
     use super::*;
@@ -82,33 +83,35 @@ mod exl_lib {
 
         fn replace_anchors(&self, chapter: &mut Chapter) -> Result<String> {
             let mut buf = String::with_capacity(chapter.content.len());
+            let mut link_stack = Vec::new();
 
             let events = Parser::new_ext(&chapter.content, Options::all()).map(|e| {
-                let ev = match &e {
-                    Event::Start(Tag::Link(..)) => "start",
-                    Event::End(Tag::Link(..)) => "end",
-                    _ => "other",
-                };
-                if ev == "other" {
-                    return e;
-                }
-                let (lt, url, title) = match &e {
-                    Event::Start(Tag::Link(lt, url, title)) => (lt, url, title),
-                    Event::End(Tag::Link(lt, url, title)) => (lt, url, title),
-                    _ => unreachable!(),
+                let (ev, (link_type, dest_url, title)) = match e.clone() {
+                    Event::Start(Tag::Link {
+                        link_type,
+                        dest_url,
+                        title,
+                        id: _,
+                    }) => {
+                        link_stack.push((link_type, dest_url, title));
+                        ("start", link_stack.last().unwrap().clone())
+                    }
+                    Event::End(TagEnd::Link) => ("end", link_stack.pop().unwrap()),
+                    _ => return e,
                 };
 
-                match lt {
+                match link_type {
                     LinkType::Shortcut
                     | LinkType::Inline
                     | LinkType::Reference
-                    | LinkType::Collapsed => {
-                        if url.starts_with("http") {
+                    | LinkType::Collapsed
+                    | LinkType::WikiLink { .. } => {
+                        if dest_url.starts_with("http") {
                             if ev == "end" {
                                 Event::Html(CowStr::from("</a>"))
                             } else {
                                 Event::Html(CowStr::from(format!(
-                                    r#"<a href="{url}" title="{title}" target="_blank">"#
+                                    r#"<a href="{dest_url}" title="{title}" target="_blank">"#
                                 )))
                             }
                         } else {
@@ -119,7 +122,7 @@ mod exl_lib {
                         if ev == "end" {
                             Event::Html(CowStr::from("</a>"))
                         } else {
-                            Event::Html(CowStr::from(format!(r#"<a href="mailto:{url}">"#)))
+                            Event::Html(CowStr::from(format!(r#"<a href="mailto:{dest_url}">"#)))
                         }
                     }
                     LinkType::Autolink => {
@@ -127,7 +130,7 @@ mod exl_lib {
                             Event::Html(CowStr::from("</a>"))
                         } else {
                             Event::Html(CowStr::from(format!(
-                                r#"<a href="{url}" target="_blank">"#
+                                r#"<a href="{dest_url}" target="_blank">"#
                             )))
                         }
                     }
@@ -150,12 +153,12 @@ mod exl_lib {
 
         fn run(&self, _ctx: &PreprocessorContext, mut book: Book) -> Result<Book> {
             book.for_each_mut(|bi| match bi {
-                mdbook::BookItem::Chapter(ref mut c) => {
+                BookItem::Chapter(c) => {
                     c.content = self
                         .replace_anchors(c)
                         .expect("Error converting links for chapter");
                 }
-                mdbook::BookItem::Separator | mdbook::BookItem::PartTitle(_) => {}
+                BookItem::Separator | BookItem::PartTitle(_) => {}
             });
             Ok(book)
         }
