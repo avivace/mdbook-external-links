@@ -1,13 +1,15 @@
-# mdbook-external-links
+# mdbook-external-links2
 
 Open external links inside your mdBooks in a different tab.
+
+This is a maintained fork of https://github.com/jonahgoldwastaken/mdbook-external-links
 
 ## Installation & usage
 
 Install through `cargo`
 
 ```bash
-cargo install mdbook-external-links
+cargo install mdbook-external-links2
 ```
 
 Include it in your `book.toml`
