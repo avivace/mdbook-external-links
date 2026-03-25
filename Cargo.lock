@@ -851,7 +851,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "mdbook-external-links"
+name = "mdbook-external-links2"
 version = "0.1.2"
 dependencies = [
  "anyhow",

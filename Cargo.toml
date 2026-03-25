@@ -1,5 +1,5 @@
 [package]
-name = "mdbook-external-links"
+name = "mdbook-external-links2"
 description = "Open external links inside your mdBooks in a different tab"
 keywords = [
   "mdbook",
@@ -10,7 +10,7 @@ keywords = [
 ]
 version = "0.1.2"
 edition = "2021"
-repository = "https://github.com/jonahgoldwastaken/mdbook-external-links"
+repository = "https://github.com/avivace/mdbook-external-links"
 license = "MPL-2.0"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
