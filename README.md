@@ -15,7 +15,7 @@ cargo install mdbook-external-links2
 Include it in your `book.toml`
 
 ```toml
-[preprocessor.external-links]
+[preprocessor.external-links2]
 ```
 
 That's it! 🚀

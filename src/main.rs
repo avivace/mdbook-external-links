@@ -10,7 +10,7 @@ use std::io;
 use std::process;
 
 pub fn make_app() -> Command {
-    Command::new("external-links-preprocessor")
+    Command::new("external-links2-preprocessor")
         .about(r#"A mdbook preprocessor that adds 'target="_blank"' to anchor tags"#)
         .subcommand(
             Command::new("supports")
@@ -148,7 +148,7 @@ mod exl_lib {
 
     impl Preprocessor for Exl {
         fn name(&self) -> &str {
-            "external-links-preprocessor"
+            "external-links2"
         }
 
         fn run(&self, _ctx: &PreprocessorContext, mut book: Book) -> Result<Book> {
