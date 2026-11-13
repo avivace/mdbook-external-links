@@ -85,7 +85,16 @@ mod exl_lib {
             let mut buf = String::with_capacity(chapter.content.len());
             let mut link_stack = Vec::new();
 
-            let events = Parser::new_ext(&chapter.content, Options::all()).map(|e| {
+            // Only enable the extensions mdBook itself uses: this preprocessor re-serializes
+            // the whole chapter, and extensions such as superscript or definition lists
+            // (part of `Options::all()` since pulldown-cmark 0.10) would rewrite the source,
+            // e.g. `^_^` into `<sup>_</sup>` or `:::tip` into a definition list.
+            let options = Options::ENABLE_TABLES
+                | Options::ENABLE_FOOTNOTES
+                | Options::ENABLE_STRIKETHROUGH
+                | Options::ENABLE_TASKLISTS
+                | Options::ENABLE_HEADING_ATTRIBUTES;
+            let events = Parser::new_ext(&chapter.content, options).map(|e| {
                 let (ev, (link_type, dest_url, title)) = match e.clone() {
                     Event::Start(Tag::Link {
                         link_type,
