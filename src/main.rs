@@ -1,9 +1,9 @@
 use clap::{Arg, ArgMatches, Command};
 use exl_lib::Exl;
 use mdbook_preprocessor::{
+    Preprocessor, PreprocessorContext,
     book::{Book, Chapter},
     errors::Result,
-    Preprocessor, PreprocessorContext,
 };
 use semver::{Version, VersionReq};
 use std::io;
@@ -170,6 +170,188 @@ mod exl_lib {
                 BookItem::Separator | BookItem::PartTitle(_) => {}
             });
             Ok(book)
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        fn process(content: &str) -> String {
+            let mut chapter = Chapter::new("Test", content.to_string(), "test.md", Vec::new());
+            Exl::new()
+                .replace_anchors(&mut chapter)
+                .expect("preprocessing failed")
+        }
+
+        /// Renders markdown to HTML with only the base syntax every mdBook build has.
+        /// Deliberately *without* the optional extensions, so that if the preprocessor
+        /// rewrites the source through one of them (e.g. `^x^` into `<sup>x</sup>`), the
+        /// rendered output differs.
+        fn render(md: &str) -> String {
+            let options = Options::ENABLE_TABLES
+                | Options::ENABLE_FOOTNOTES
+                | Options::ENABLE_STRIKETHROUGH
+                | Options::ENABLE_TASKLISTS
+                | Options::ENABLE_HEADING_ATTRIBUTES;
+            let mut html = String::new();
+            pulldown_cmark::html::push_html(&mut html, Parser::new_ext(md, options));
+            html
+        }
+
+        /// Asserts that the preprocessor leaves `content` semantically unchanged. The
+        /// serializer may normalize syntax (escape `_` as `\_`, change fence style, ...),
+        /// so this compares rendered HTML rather than bytes.
+        #[track_caller]
+        fn assert_untouched(content: &str) -> String {
+            let out = process(content);
+            assert_eq!(
+                render(&out),
+                render(content),
+                "source was rewritten into:\n{out}"
+            );
+            out
+        }
+
+        // --- Links ------------------------------------------------------------------
+
+        #[test]
+        fn inline_external_link_opens_in_new_tab() {
+            assert_eq!(
+                process("See [gbadev](https://gbadev.net) for more."),
+                r#"See <a href="https://gbadev.net" title="" target="_blank">gbadev</a> for more."#
+            );
+        }
+
+        #[test]
+        fn inline_external_link_keeps_title() {
+            assert_eq!(
+                process(r#"[gbadev](https://gbadev.net "GBA dev")"#),
+                r#"<a href="https://gbadev.net" title="GBA dev" target="_blank">gbadev</a>"#
+            );
+        }
+
+        #[test]
+        fn plain_http_link_opens_in_new_tab() {
+            assert!(process("[x](http://example.com)").contains(r#"target="_blank""#));
+        }
+
+        #[test]
+        fn reference_external_link_opens_in_new_tab() {
+            let out = process("Read [the docs][docs].\n\n[docs]: https://example.com/docs\n");
+            assert!(
+                out.contains(
+                    r#"<a href="https://example.com/docs" title="" target="_blank">the docs</a>"#
+                ),
+                "{out}"
+            );
+        }
+
+        #[test]
+        fn autolink_opens_in_new_tab() {
+            assert_eq!(
+                process("<https://example.com>"),
+                r#"<a href="https://example.com" target="_blank">https://example.com</a>"#
+            );
+        }
+
+        #[test]
+        fn email_autolink_becomes_mailto() {
+            assert_eq!(
+                process("<someone@example.com>"),
+                r#"<a href="mailto:someone@example.com">someone@example.com</a>"#
+            );
+        }
+
+        #[test]
+        fn formatting_inside_link_text_is_kept() {
+            assert_eq!(
+                process("[**bold** link](https://example.com)"),
+                r#"<a href="https://example.com" title="" target="_blank">**bold** link</a>"#
+            );
+        }
+
+        #[test]
+        fn relative_links_are_untouched() {
+            assert_untouched("[next chapter](./next.md)");
+            assert_untouched("[section](#section)");
+            assert_untouched("[image dir](img/foo.png)");
+        }
+
+        #[test]
+        fn links_in_code_are_untouched() {
+            assert_untouched("`[x](https://example.com)`");
+            assert_untouched("```md\n[x](https://example.com)\n```");
+        }
+
+        #[test]
+        fn chapters_without_links_are_untouched() {
+            assert_untouched("# Title\n\nSome *emphasis* and **strong** text.");
+        }
+
+        // --- Regressions: markdown extensions mdBook doesn't use ----------------------
+        //
+        // The whole chapter is re-serialized, so any extension that mdBook itself does not
+        // enable must stay off; otherwise the source is rewritten before other
+        // preprocessors (and mdBook) see it. These used to break with `Options::all()`.
+
+        #[test]
+        fn admonition_after_paragraph_is_not_a_definition_list() {
+            // With definition lists enabled, `:::tip` after a paragraph parses as the
+            // definition `::tip` of the paragraph and is re-serialized as `: ::tip`.
+            let out = assert_untouched("Some text.\n\n:::tip Title\n\nTip body.\n\n:::");
+            assert!(out.contains("\n:::tip Title\n"), "{out}");
+            assert!(!out.contains(": ::"), "{out}");
+        }
+
+        #[test]
+        fn colon_line_after_paragraph_is_not_a_definition_list() {
+            assert_untouched("Term\n: not a definition");
+        }
+
+        #[test]
+        fn carets_are_not_superscript() {
+            // With superscript enabled this became `<sup>\_</sup>`.
+            for md in ["Yay <kbd>^_^;;</kbd>", "2^10^ is 1024"] {
+                let out = assert_untouched(md);
+                assert!(!out.contains("<sup>"), "{out}");
+            }
+        }
+
+        #[test]
+        fn tildes_are_strikethrough_not_subscript() {
+            // mdBook enables strikethrough, but not subscript.
+            let out = assert_untouched("H~2~O and ~~gone~~");
+            assert!(!out.contains("<sub>"), "{out}");
+        }
+
+        #[test]
+        fn double_brackets_are_not_wikilinks() {
+            assert_untouched("[[not a link]]");
+        }
+
+        #[test]
+        fn quotes_are_not_smartened() {
+            // Smart punctuation is an mdBook renderer option (`output.html.smart-punctuation`);
+            // a preprocessor must not apply it behind the user's back.
+            let out = assert_untouched(r#"It's "quoted" -- ok..."#);
+            assert!(!out.contains(['’', '“', '”', '–', '…']), "{out}");
+        }
+
+        #[test]
+        fn dollar_signs_are_not_math() {
+            assert_untouched("Costs $5 and $10");
+        }
+
+        #[test]
+        fn heading_attributes_are_kept() {
+            assert_untouched("## Introduction {#sec-intro}");
+        }
+
+        #[test]
+        fn tables_are_kept() {
+            let out = process("| a | b |\n|---|---|\n| 1 | 2 |");
+            assert!(out.contains("|a|b|") || out.contains("| a | b |"), "{out}");
         }
     }
 }
